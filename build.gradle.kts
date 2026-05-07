@@ -17,6 +17,11 @@ dependencies {
         // Final compatibility range is patched into plugin.xml below.
         intellijIdeaCommunity("2024.3")
 
+        // Required by IntelliJ Platform Gradle Plugin v2 for the
+        // instrumentCode task. Skipping this fails with "No Java Compiler
+        // dependency found" even if we don't use form/DSL instrumentation.
+        instrumentationTools()
+
         // Test framework for the IntelliJ Platform.
         testFramework(org.jetbrains.intellij.platform.gradle.TestFrameworkType.Platform)
     }
