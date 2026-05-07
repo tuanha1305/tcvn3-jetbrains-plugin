@@ -1,0 +1,59 @@
+<idea-plugin>
+  <id>io.github.tuanha1305.tcvn3</id>
+  <name>TCVN3 Vietnamese Encoding</name>
+  <version>1.0.0</version>
+  <vendor email="tuancntt971@gmail.com" url="https://github.com/tuanha1305/tcvn3-jetbrains-plugin">tuanha1305</vendor>
+
+  <description><![CDATA[
+    Adds the legacy Vietnamese <b>TCVN3</b> (also known as ABC) encoding to all
+    JetBrains IDEs. After installing, "TCVN3" appears in the encoding dropdown
+    (status bar / File Encoding settings) and works for file open / save / Find
+    in Files like any built-in charset.
+    <br/><br/>
+    <b>Includes</b>:
+    <ul>
+      <li><b>Charset</b> registered via Java SPI - integrates with the IDE's
+          built-in encoding system.</li>
+      <li><b>Round-trip safe</b> - non-TCVN3 bytes (e.g. GBK Chinese filenames
+          inside game data files) decode into the Unicode Private Use Area and
+          re-encode byte-identical. Save without corrupting paths.</li>
+      <li><b>Clipboard bridge actions</b> for copying to / pasting from tools
+          like Notepad++ that show TCVN3 via .VnTime + ANSI:
+          <ul>
+            <li><i>TCVN3: Copy as bytes</i> (Ctrl+Alt+C)</li>
+            <li><i>TCVN3: Paste from bytes</i> (Ctrl+Alt+V)</li>
+          </ul>
+      </li>
+    </ul>
+  ]]></description>
+
+  <change-notes><![CDATA[
+    <ul>
+      <li>1.0.0 - Initial release. Charset registration + clipboard bridge
+          actions. Mirrors the same codec used by the VS Code patch
+          (<a href="https://github.com/tuanha1305/vs-code-tcvn3-customize">vs-code-tcvn3-customize</a>).</li>
+    </ul>
+  ]]></change-notes>
+
+  <!-- Compatible with all IntelliJ-based IDEs. since-build is set in
+       build.gradle.kts via patchPluginXml. -->
+  <depends>com.intellij.modules.platform</depends>
+
+  <actions>
+    <action id="tcvn3.CopyAsBytes"
+            class="io.github.tuanha1305.tcvn3.actions.CopyAsTcvn3BytesAction"
+            text="TCVN3: Copy as Bytes"
+            description="Copy the selection as TCVN3 bytes (Latin-1 wire form). Use to paste into Notepad++/Notepad in ANSI + .VnTime mode.">
+      <add-to-group group-id="EditMenu" anchor="after" relative-to-action="$Copy"/>
+      <keyboard-shortcut keymap="$default" first-keystroke="ctrl alt C"/>
+    </action>
+
+    <action id="tcvn3.PasteFromBytes"
+            class="io.github.tuanha1305.tcvn3.actions.PasteFromTcvn3BytesAction"
+            text="TCVN3: Paste from Bytes"
+            description="Interpret the clipboard as TCVN3 bytes and paste decoded Vietnamese text. Use after copying from Notepad++/Notepad in ANSI + .VnTime mode.">
+      <add-to-group group-id="EditMenu" anchor="after" relative-to-action="$Paste"/>
+      <keyboard-shortcut keymap="$default" first-keystroke="ctrl alt V"/>
+    </action>
+  </actions>
+</idea-plugin>
