@@ -20,21 +20,25 @@ jobs:
           distribution: temurin
           java-version: 17
 
-      - uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: 8.10
+      - name: Install Gradle 8.10.2
+        run: |
+          curl -fsSL https://services.gradle.org/distributions/gradle-8.10.2-bin.zip -o /tmp/gradle.zip
+          unzip -q /tmp/gradle.zip -d /opt
+          echo "/opt/gradle-8.10.2/bin" >> "$GITHUB_PATH"
 
-      - name: Generate Gradle wrapper
-        run: gradle wrapper
+      - name: Verify Gradle
+        run: gradle --version
+
+      - uses: gradle/actions/setup-gradle@v4
 
       - name: Run tests
-        run: ./gradlew test --no-daemon --stacktrace
+        run: gradle test --no-daemon --stacktrace
 
       - name: Verify plugin
-        run: ./gradlew verifyPluginProjectConfiguration --no-daemon
+        run: gradle verifyPluginProjectConfiguration --no-daemon
 
       - name: Build plugin .zip
-        run: ./gradlew buildPlugin --no-daemon
+        run: gradle buildPlugin --no-daemon
 
       - name: Show artifact
         run: ls -la build/distributions/
