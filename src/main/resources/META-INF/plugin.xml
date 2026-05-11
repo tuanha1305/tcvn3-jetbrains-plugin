@@ -1,7 +1,7 @@
 <idea-plugin>
   <id>io.github.tuanha1305.tcvn3</id>
   <name>TCVN3 Vietnamese Encoding</name>
-  <version>1.0.1</version>
+  <version>1.0.2</version>
   <vendor email="tuancntt971@gmail.com" url="https://github.com/tuanha1305/tcvn3-jetbrains-plugin">tuanha1305</vendor>
 
   <description><![CDATA[
@@ -21,6 +21,12 @@
 
   <change-notes><![CDATA[
     <ul>
+      <li>1.0.2 - Fix: bootstrap was registered via
+          ApplicationInitializedListener, which fires only at IDE startup.
+          Users who installed v1.0.1 dynamically (without restart) saw the
+          listener miss its window and the charset never reached the picker.
+          Now wired as an application service with preload=await so it runs
+          on both cold start and dynamic plugin load.</li>
       <li>1.0.1 - Fix: TCVN3 was not appearing in the encoding picker on
           fresh installs because the standard Java charset SPI cannot see
           plugin classloader resources. Now bootstrapped at IDE init: TCVN3
@@ -36,12 +42,16 @@
        set via the Gradle plugin's pluginConfiguration block. -->
   <depends>com.intellij.modules.platform</depends>
 
-  <applicationListeners>
-    <!-- Runs once when the IDE finishes initialization. The bootstrap pushes
-         TCVN3 into Charset's internal cache and IntelliJ's EncodingManager
-         favorites, because the standard Java charset SPI's classloader rules
-         hide plugin-contributed providers from the IDE. -->
-    <listener class="io.github.tuanha1305.tcvn3.Tcvn3Bootstrap"
-              topic="com.intellij.ide.ApplicationInitializedListener"/>
-  </applicationListeners>
+  <extensions defaultExtensionNs="com.intellij">
+    <!-- Eagerly-loaded application service. preload="await" makes the platform
+         instantiate Tcvn3Bootstrap as soon as the plugin's classloader is
+         active - both at IDE cold start AND on dynamic install/update without
+         restart. Its init block pushes TCVN3 into Charset's internal cache
+         and IntelliJ's EncodingManager favorites, because the standard Java
+         charset SPI's classloader rules hide plugin-contributed providers
+         from the IDE. -->
+    <applicationService
+        serviceImplementation="io.github.tuanha1305.tcvn3.Tcvn3Bootstrap"
+        preload="await"/>
+  </extensions>
 </idea-plugin>
