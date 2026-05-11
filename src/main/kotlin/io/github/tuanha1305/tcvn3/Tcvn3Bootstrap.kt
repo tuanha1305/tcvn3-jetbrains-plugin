@@ -4,34 +4,37 @@ import com.intellij.openapi.components.Service
 import com.intellij.openapi.diagnostic.thisLogger
 import com.intellij.openapi.vfs.encoding.EncodingManager
 import java.nio.charset.Charset
+import java.lang.reflect.Modifier
 
 /**
  * Force-register TCVN3 with the running IDE the moment the plugin's
  * classloader is alive.
  *
- * Why a Service with `preload="await"` (set in plugin.xml) instead of
- * ApplicationInitializedListener:
- *   - ApplicationInitializedListener fires exactly ONCE at IDE startup. If a
- *     user dynamically installs / updates the plugin without restarting the
- *     IDE (which IntelliJ allows), that event already fired and the listener
- *     never runs - which is what we hit on v1.0.1.
- *   - An application service with preload is instantiated by the platform as
- *     soon as the plugin is loaded, both at startup AND on dynamic load.
+ * IntelliJ's encoding picker reads from `Charset.availableCharsets()` and
+ * `EncodingManager.favorites`. The plugin ships a Java SPI provider
+ * (`META-INF/services/java.nio.charset.spi.CharsetProvider`), but the SPI
+ * scans `ClassLoader.getSystemClassLoader()` and the file lives in the
+ * plugin's child classloader, so the IDE never sees it.
  *
- * Why the bootstrap is needed at all:
- *   The plugin ships META-INF/services/java.nio.charset.spi.CharsetProvider,
- *   but Charset.providers() scans `ClassLoader.getSystemClassLoader()` and
- *   our SPI file is in the plugin classloader (a child of system) - so
- *   Charset.availableCharsets() does NOT include TCVN3, and the IDE encoding
- *   picker does not list it.
+ * We compensate with two best-effort reflection hooks:
  *
- *   We compensate by:
- *     1. Pushing Tcvn3Charset into Charset's private cache so Charset.forName
- *        resolves it anywhere in the IDE.
- *     2. Adding the charset to EncodingManager.favorites so it appears in the
- *        IDE's encoding picker dropdown.
+ *   1. Find Charset's private name -> Charset cache (varies across JDK
+ *      versions: `cache1`/`cache2` on OpenJDK 17-21, possibly different in
+ *      JDK 25) and add Tcvn3Charset entries for the canonical name plus all
+ *      aliases. After this, `Charset.forName("TCVN3")` resolves.
  *
- *   Both calls are best-effort and degrade gracefully.
+ *   2. Find EncodingManager's favorites field/method (varies across IDE
+ *      versions) and add Tcvn3Charset. This is what makes TCVN3 show up in
+ *      the status-bar / picker dropdown.
+ *
+ * Failures are logged and the IDE keeps running - if the in-IDE picker can't
+ * be patched, the user can still set the encoding via the
+ * `ReloadFileAsTcvn3Action` (Tools menu / Command Palette).
+ *
+ * Service is registered with `preload="notAwait"` in plugin.xml. `await` is
+ * reserved for core services; `notAwait` is allowed for plugins and still
+ * forces eager instantiation, which is what we need to run this bootstrap
+ * whether the plugin is loaded at IDE start or installed dynamically.
  */
 @Service(Service.Level.APP)
 internal class Tcvn3Bootstrap {
@@ -41,65 +44,118 @@ internal class Tcvn3Bootstrap {
         thisLogger().info("Tcvn3Bootstrap initializing - registering TCVN3 charset")
         installIntoCharsetCache(instance)
         addToEncodingManagerFavorites(instance)
-        thisLogger().info("Tcvn3Bootstrap done. Charset.forName(\"TCVN3\") -> " +
-            runCatching { Charset.forName("TCVN3").name() }.getOrElse { "FAILED: $it" })
+        val probe = runCatching { Charset.forName("TCVN3").name() }
+        if (probe.isSuccess) {
+            thisLogger().info("Tcvn3Bootstrap done. Charset.forName(\"TCVN3\") -> ${probe.getOrNull()}")
+        } else {
+            thisLogger().warn("Tcvn3Bootstrap done but Charset.forName(\"TCVN3\") still fails: ${probe.exceptionOrNull()}. Users can still apply TCVN3 via the explicit \"Reload File with TCVN3 Encoding\" action.")
+        }
     }
 
+    /**
+     * Walk every static field on java.nio.charset.Charset and patch the first
+     * one that exposes a `Map<String, Charset>` (the JDK's internal name
+     * cache). This avoids hard-coding `cache1`/`cache2` which change across
+     * JDK versions.
+     */
     private fun installIntoCharsetCache(cs: Charset) {
-        // Modern OpenJDK (>= 9) uses two private fields on Charset:
-        //   - cache1: Object[2] = [String name, Charset cs] for a 1-entry hot cache
-        //   - cache2: Map<String, Charset> for the rest
-        // Older field names may exist; try a few defensively.
-        val candidateFields = listOf("cache2", "cache1")
         var patched = false
-        for (fieldName in candidateFields) {
+        for (field in Charset::class.java.declaredFields) {
+            if (!Modifier.isStatic(field.modifiers)) continue
             try {
-                val field = Charset::class.java.getDeclaredField(fieldName)
                 field.isAccessible = true
                 val value = field.get(null)
-                if (value is MutableMap<*, *>) {
-                    @Suppress("UNCHECKED_CAST")
-                    val cache = value as MutableMap<String, Charset>
-                    cache[cs.name()] = cs
-                    cache[cs.name().lowercase()] = cs
-                    for (alias in cs.aliases()) {
-                        cache[alias] = cs
-                        cache[alias.lowercase()] = cs
-                    }
-                    thisLogger().info("Patched Charset.$fieldName with TCVN3 + ${cs.aliases().size} alias(es)")
-                    patched = true
+                if (value !is MutableMap<*, *>) continue
+                @Suppress("UNCHECKED_CAST")
+                val cache = value as MutableMap<String, Charset>
+                cache[cs.name()] = cs
+                cache[cs.name().lowercase()] = cs
+                for (alias in cs.aliases()) {
+                    cache[alias] = cs
+                    cache[alias.lowercase()] = cs
                 }
-            } catch (e: NoSuchFieldException) {
-                // OK - field name varies by JDK; try the next.
+                thisLogger().info("Patched Charset.${field.name} (${value.javaClass.simpleName}) with TCVN3 + ${cs.aliases().size} alias(es)")
+                patched = true
             } catch (e: Throwable) {
-                thisLogger().warn("Could not patch Charset.$fieldName", e)
+                thisLogger().debug("Skipping Charset.${field.name}: $e")
             }
         }
         if (!patched) {
-            thisLogger().warn("Could not patch any Charset cache field; Charset.forName(\"TCVN3\") may not resolve.")
+            // Last-resort enumeration so we can SEE in idea.log what fields
+            // exist on this JDK. The field names change in JDK 25+.
+            val fields = Charset::class.java.declaredFields.joinToString {
+                "${it.name}:${it.type.simpleName}"
+            }
+            thisLogger().warn("Could not patch any Charset cache field. Fields on this JDK: $fields")
         }
     }
 
+    /**
+     * Try multiple known APIs to register the charset with IntelliJ's
+     * encoding picker.
+     *
+     * On older IDEs `EncodingManagerImpl.setFavorites(Collection<Charset>)`
+     * worked. On 2026.1 that method is gone. We fall back to mutating the
+     * underlying favorites Collection in place if it is mutable, or to
+     * setting the backing field directly via reflection.
+     */
     private fun addToEncodingManagerFavorites(cs: Charset) {
-        try {
-            val em = EncodingManager.getInstance()
-            val current = em.favorites?.toMutableList() ?: mutableListOf()
-            if (current.any { it.name() == cs.name() }) {
-                thisLogger().info("EncodingManager already lists TCVN3 in favorites; nothing to do.")
-                return
-            }
-            current.add(cs)
-            val setFavorites = em.javaClass.methods.firstOrNull {
-                it.name == "setFavorites" && it.parameterCount == 1
-            }
-            if (setFavorites != null) {
-                setFavorites.invoke(em, current)
-                thisLogger().info("TCVN3 added to EncodingManager favorites - visible in encoding picker.")
-            } else {
-                thisLogger().warn("EncodingManager.setFavorites not found on ${em.javaClass.name}; picker entry may be missing.")
-            }
+        val em: EncodingManager = try {
+            EncodingManager.getInstance()
         } catch (t: Throwable) {
-            thisLogger().warn("Could not register TCVN3 with EncodingManager favorites.", t)
+            thisLogger().warn("EncodingManager.getInstance() failed", t); return
         }
+
+        // (a) Already there? Nothing to do.
+        val current = try { em.favorites } catch (_: Throwable) { null }
+        if (current != null && current.any { it.name() == cs.name() }) {
+            thisLogger().info("EncodingManager already lists TCVN3 in favorites.")
+            return
+        }
+
+        // (b) Public setter, if it exists.
+        val setMethod = em.javaClass.methods.firstOrNull {
+            it.name == "setFavorites" && it.parameterCount == 1
+        }
+        if (setMethod != null) {
+            try {
+                val newList = (current?.toMutableList() ?: mutableListOf()).also { it.add(cs) }
+                setMethod.invoke(em, newList)
+                thisLogger().info("TCVN3 added via EncodingManager.setFavorites - visible in encoding picker.")
+                return
+            } catch (e: Throwable) {
+                thisLogger().warn("setFavorites threw", e)
+            }
+        }
+
+        // (c) Walk fields on EncodingManagerImpl and try to mutate any
+        //     Collection<Charset>-like field directly.
+        val implClass = em.javaClass
+        var classCursor: Class<*>? = implClass
+        while (classCursor != null && classCursor != Any::class.java) {
+            for (field in classCursor.declaredFields) {
+                if (Modifier.isStatic(field.modifiers)) continue
+                try {
+                    field.isAccessible = true
+                    val value = field.get(em) ?: continue
+                    if (value is MutableCollection<*>) {
+                        // Check if it's a Collection of Charset (sample first element).
+                        val sample = value.firstOrNull()
+                        if (sample == null || sample is Charset) {
+                            @Suppress("UNCHECKED_CAST")
+                            val coll = value as MutableCollection<Charset>
+                            if (coll.none { it.name() == cs.name() }) {
+                                coll.add(cs)
+                                thisLogger().info("TCVN3 added to ${classCursor.simpleName}.${field.name} (${value.javaClass.simpleName}) - picker should list it.")
+                                return
+                            }
+                        }
+                    }
+                } catch (_: Throwable) { /* skip */ }
+            }
+            classCursor = classCursor.superclass
+        }
+
+        thisLogger().warn("Could not find a way to add TCVN3 to EncodingManager favorites on this IDE. The 'Reload File with TCVN3 Encoding' action is the fallback path.")
     }
 }

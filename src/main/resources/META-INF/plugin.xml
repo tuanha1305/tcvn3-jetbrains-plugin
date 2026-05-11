@@ -1,7 +1,7 @@
 <idea-plugin>
   <id>io.github.tuanha1305.tcvn3</id>
   <name>TCVN3 Vietnamese Encoding</name>
-  <version>1.0.2</version>
+  <version>1.0.3</version>
   <vendor email="tuancntt971@gmail.com" url="https://github.com/tuanha1305/tcvn3-jetbrains-plugin">tuanha1305</vendor>
 
   <description><![CDATA[
@@ -21,6 +21,23 @@
 
   <change-notes><![CDATA[
     <ul>
+      <li>1.0.3 - Fix for IDE 2026.1 / JBR 25:
+          <ul>
+            <li><code>preload="await"</code> is rejected for non-core services
+                ("must be used only for core services"). Switched to
+                <code>preload="notAwait"</code> which IDE accepts.</li>
+            <li>JDK 25 renamed Charset cache fields. Bootstrap now scans every
+                static <code>Map&lt;String, Charset&gt;</code> field on
+                Charset instead of hard-coding <code>cache1/cache2</code>.</li>
+            <li><code>EncodingManagerImpl.setFavorites(Collection)</code> is
+                gone in 2026.1. Bootstrap now walks fields on
+                EncodingManagerImpl to find any mutable Collection&lt;Charset&gt;
+                and adds TCVN3 to it.</li>
+            <li>Added explicit <i>Tools | Reload File with TCVN3 Encoding</i>
+                action as a guaranteed fallback - works even when the IDE
+                internals change and the bootstrap can't patch them.</li>
+          </ul>
+      </li>
       <li>1.0.2 - Fix: bootstrap was registered via
           ApplicationInitializedListener, which fires only at IDE startup.
           Users who installed v1.0.1 dynamically (without restart) saw the
@@ -43,15 +60,27 @@
   <depends>com.intellij.modules.platform</depends>
 
   <extensions defaultExtensionNs="com.intellij">
-    <!-- Eagerly-loaded application service. preload="await" makes the platform
-         instantiate Tcvn3Bootstrap as soon as the plugin's classloader is
-         active - both at IDE cold start AND on dynamic install/update without
-         restart. Its init block pushes TCVN3 into Charset's internal cache
-         and IntelliJ's EncodingManager favorites, because the standard Java
-         charset SPI's classloader rules hide plugin-contributed providers
-         from the IDE. -->
+    <!-- Eagerly-loaded application service. preload="notAwait" is the
+         strongest setting allowed for non-core (plugin) services in modern
+         IntelliJ - "await" is rejected with SEVERE log. notAwait still
+         instantiates the service as soon as the plugin's classloader is
+         active, both at IDE cold start AND on dynamic install/update. Its
+         init block patches Charset's internal name cache and IntelliJ's
+         EncodingManager favorites so TCVN3 shows up in the picker. -->
     <applicationService
         serviceImplementation="io.github.tuanha1305.tcvn3.Tcvn3Bootstrap"
-        preload="await"/>
+        preload="notAwait"/>
   </extensions>
+
+  <actions>
+    <!-- Guaranteed fallback: explicitly reload the active file under the
+         TCVN3 charset, even if the bootstrap could not patch the picker on
+         this IDE/JDK combination. -->
+    <action id="Tcvn3.ReloadFile"
+            class="io.github.tuanha1305.tcvn3.ReloadFileAsTcvn3Action"
+            text="Reload File with TCVN3 Encoding"
+            description="Reload the current file as TCVN3 (Vietnamese ABC) regardless of the IDE's encoding picker.">
+      <add-to-group group-id="ToolsMenu" anchor="last"/>
+    </action>
+  </actions>
 </idea-plugin>
