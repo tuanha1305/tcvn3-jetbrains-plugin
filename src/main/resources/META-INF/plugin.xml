@@ -1,7 +1,7 @@
 <idea-plugin>
   <id>io.github.tuanha1305.tcvn3</id>
   <name>TCVN3 Vietnamese Encoding</name>
-  <version>1.0.4</version>
+  <version>1.0.5</version>
   <vendor email="tuancntt971@gmail.com" url="https://github.com/tuanha1305/tcvn3-jetbrains-plugin">tuanha1305</vendor>
 
   <description><![CDATA[
@@ -21,6 +21,14 @@
 
   <change-notes><![CDATA[
     <ul>
+      <li>1.0.5 - Fix for JDK 25: cache1/cache2 on java.nio.charset.Charset
+          are now Object[] (rotating pair arrays), not Map. The v1.0.4 cache
+          patching never matched a Map field and the charset stayed
+          unresolvable. v1.0.5 changes strategy: it wraps the final-static
+          Charset.standardProvider with a delegating CharsetProvider via
+          sun.misc.Unsafe. Charset.forName and Charset.availableCharsets both
+          consult standardProvider, so TCVN3 now resolves and shows up in
+          the IDE encoding picker automatically.</li>
       <li>1.0.4 - Fix: <code>preload="notAwait"</code> is not a valid value
           ("Unknown preload mode value" SEVERE log). Valid values per IntelliJ
           source are <code>await</code>, <code>true</code>, <code>notHeadless</code>,
