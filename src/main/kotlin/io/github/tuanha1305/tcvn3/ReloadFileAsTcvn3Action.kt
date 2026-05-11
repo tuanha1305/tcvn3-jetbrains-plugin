@@ -4,9 +4,9 @@ import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.CommonDataKeys
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.vfs.encoding.EncodingProjectManager
-import com.intellij.openapi.vfs.encoding.EncodingUtil
 
 /**
  * Fallback path for users on IDE / JDK versions where the bootstrap could not
@@ -36,10 +36,21 @@ class ReloadFileAsTcvn3Action : AnAction() {
         val fdm = FileDocumentManager.getInstance()
         fdm.getDocument(file)?.let { fdm.saveDocument(it) }
 
-        // Persist the chosen charset for this file.
+        // Persist the chosen charset for this file. EncodingProjectManager
+        // records this in .idea/encodings.xml and signals listeners to
+        // re-read the file with the new charset on next access.
         EncodingProjectManager.getInstance(project).setEncoding(file, cs)
 
-        // Reload bytes through the new charset, preserving the editor state.
-        EncodingUtil.reloadIn(file, cs, project)
+        // Force the in-memory Document to re-load from disk using the
+        // new encoding right away (otherwise the editor keeps the old
+        // text until the next file reopen).
+        val doc = fdm.getCachedDocument(file)
+        if (doc != null) {
+            ApplicationManager.getApplication().invokeLater {
+                ApplicationManager.getApplication().runWriteAction {
+                    fdm.reloadFromDisk(doc)
+                }
+            }
+        }
     }
 }
