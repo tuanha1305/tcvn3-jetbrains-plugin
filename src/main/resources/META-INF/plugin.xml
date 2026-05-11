@@ -1,7 +1,7 @@
 <idea-plugin>
   <id>io.github.tuanha1305.tcvn3</id>
   <name>TCVN3 Vietnamese Encoding</name>
-  <version>1.0.0</version>
+  <version>1.0.1</version>
   <vendor email="tuancntt971@gmail.com" url="https://github.com/tuanha1305/tcvn3-jetbrains-plugin">tuanha1305</vendor>
 
   <description><![CDATA[
@@ -21,6 +21,11 @@
 
   <change-notes><![CDATA[
     <ul>
+      <li>1.0.1 - Fix: TCVN3 was not appearing in the encoding picker on
+          fresh installs because the standard Java charset SPI cannot see
+          plugin classloader resources. Now bootstrapped at IDE init: TCVN3
+          is pushed into Charset's internal cache and added to
+          EncodingManager favorites.</li>
       <li>1.0.0 - Initial release. Registers the TCVN3 charset for the entire
           IntelliJ Platform via Java SPI. Mirrors the codec used by
           <a href="https://github.com/tuanha1305/vs-code-tcvn3-customize">vs-code-tcvn3-customize</a>.</li>
@@ -30,4 +35,13 @@
   <!-- Compatible with all IntelliJ-based IDEs. since-build / until-build are
        set via the Gradle plugin's pluginConfiguration block. -->
   <depends>com.intellij.modules.platform</depends>
+
+  <applicationListeners>
+    <!-- Runs once when the IDE finishes initialization. The bootstrap pushes
+         TCVN3 into Charset's internal cache and IntelliJ's EncodingManager
+         favorites, because the standard Java charset SPI's classloader rules
+         hide plugin-contributed providers from the IDE. -->
+    <listener class="io.github.tuanha1305.tcvn3.Tcvn3Bootstrap"
+              topic="com.intellij.ide.ApplicationInitializedListener"/>
+  </applicationListeners>
 </idea-plugin>
